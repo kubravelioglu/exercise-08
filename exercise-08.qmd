@@ -1,0 +1,228 @@
+---
+title: "exercise-08"
+format: html
+editor: visual
+---
+
+***Step 1***
+
+```{r}
+library(tidyverse)
+library(skimr)
+f <- "https://raw.githubusercontent.com/difiore/ada-datasets/main/Street_et_al_2017.csv"
+d <-read_csv(f, col_names = TRUE)
+
+glimpse(d)
+skim(d)
+
+
+```
+
+**Step 2**\*
+
+```{r}
+
+par(mfrow = c(2,2))
+plot(d$Group_size, d$ECV) 
+plot(d$Longevity, d$ECV) 
+plot(d$Weaning, d$ECV) 
+plot(d$Repro_lifespan, d$ECV) 
+
+```
+
+***Step 3***
+
+```{r}
+
+omit_na <- na.omit(d[, c("ECV", "Group_size")]) 
+
+gs <- omit_na$Group_size #independent variable
+ecv <- omit_na$ECV      #dependent variable
+
+(beta1 <- cor(gs, ecv) * (sd(ecv) / sd(gs)))  
+
+
+(beta0 <- mean(ecv) - beta1 * mean(gs))  
+
+```
+
+***Step 4***
+
+```{r}
+m <- lm(ECV ~ Group_size, data = omit_na)
+
+summary(m)
+
+```
+
+***Step 5***
+
+```{r}
+library(broom)
+# Catarrhini
+c <- d |> filter(Taxonomic_group == "Catarrhini")
+m1 <- lm(ECV ~ Group_size, data = c)
+cat_tidy <- tidy(m1) |> mutate(Group = "Catarrhini")
+
+# Platyrrhini
+p <- d |> filter(Taxonomic_group == "Platyrrhini")
+m2 <- lm(ECV ~ Group_size, data = p)
+pla_tidy <- tidy(m2) |> mutate(Group = "Platyrrhini")
+
+#  Strepsirhini
+s <- d |> filter(Taxonomic_group == "Strepsirhini")
+m3 <- lm(ECV ~ Group_size, data = s)
+streps_tidy <- tidy(m3) |> mutate(Group = "Strepsirhini")
+
+# Combine all tidy 
+regression_coefficients <- bind_rows(cat_tidy, pla_tidy, streps_tidy)
+
+regression_coefficients
+
+```
+
+***Do your regression coefficients differ among groups? How might you determine this?***
+
+#The regression coefficients likely differ among primate groups, as indicated by the varying effects of Group_size on ECV. Among the groups, Platyrrhini exhibits the strongest effect, with the highest slope (1.97) and a highly significant p-value (0.000136), suggesting a strong positive relationship between social group size and brain size. Similarly, Strepsirhini also shows a significant effect (slope = 1.84, p = 0.000332), indicating that Group_size plays a meaningful role in brain size variation within this group. In contrast, Catarrhini demonstrates the weakest effect (slope = 1.15, p = 0.0518), which is not statistically significant at the conventional 0.05 level. This suggests that the influence of Group_size on ECV is weaker or more variable in Catarrhini.
+
+***Step 6***
+
+```{r}
+
+# Grab a tidy table of regression statistics
+tidy_m <- broom::tidy(m)
+
+# Extract the slope coefficient and standard error from the tidy table
+obs_slope <- tidy_m |>
+  filter(term == "Group_size") |>
+  pull(estimate)
+
+slope_se <- tidy_m |>
+  filter(term == "Group_size") |>
+  pull(std.error)
+
+# Print the observed slope and standard error
+obs_slope
+slope_se
+
+# Residuals and Sum of Squared Residuals (SSR)
+residuals <- residuals(m)
+SSR <- sum(residuals^2)
+
+head(residuals)
+SSR
+
+# Number of data points and variance of Group_size
+
+n <- nrow(omit_na)
+variance_x <- sum((omit_na$Group_size - mean(omit_na$Group_size))^2)
+
+n
+variance_x
+
+# Manually calculate standard error for slope
+SE_beta1 <- sqrt(SSR / (n - 2)) / sqrt(variance_x)
+SE_beta1
+
+# Degrees of freedom for the model (n - 2)
+df <- n - 2
+df
+
+# Critical t-value for 95% confidence level
+t_critical <- qt(0.975, df)
+t_critical
+
+# Calculate the 95% CI for the slope manually
+ci_slope_lower <- obs_slope - t_critical * slope_se
+ci_slope_upper <- obs_slope + t_critical * slope_se
+
+ci_slope_lower
+ci_slope_upper
+
+# Calculate the t-statistic and p-value for the slope
+t_statistic <- obs_slope / slope_se
+p_value <- 2 * pt(abs(t_statistic), df, lower.tail = FALSE)
+
+t_statistic
+p_value
+
+# To compare use confint
+confint(m)
+```
+
+***Step 7***
+
+```{r}
+
+library(infer)
+nperm <- 1000
+
+# Generate permutation distribution for slope
+perm <- d |>
+  specify(ECV ~ Group_size) |>   # specify the model
+  hypothesize(null = "independence") |>  # null hypothesis: no relationship between ECV and Group_size
+  generate(reps = nperm, type = "permute") |>  # generate 1000 permutations
+  calculate(stat = "slope")  # calculate the slope statistic 
+
+# Calculate the observed slope from the original data
+obs_slope <- lm(ECV ~ Group_size, data = d) |>
+  broom::tidy() |>
+  filter(term == "Group_size") |>
+  pull(estimate)
+
+obs_slope
+
+# Calculate the p-value for the observed slope using the quantile method
+p_value_perm <- mean(abs(perm$stat) >= abs(obs_slope))
+
+p_value_perm
+
+```
+
+***Explanation***
+
+#The independent variable, Group_size, is permuted while keeping the dependent variable, ECV, fixed. This ensures the null hypothesis assumption (no relationship between Group_size and ECV) is tested by creating many random relationships between the variables.
+
+#The p-value is calculated by comparing the observed slope (from the original model) to the permutation distribution of slopes. The p-value represents the proportion of permuted slopes that are as extreme than the observed slope us to determine how rare or common such a relationship is under the null hypothesis.
+
+#The p-value of 0 suggests that the observed relationship between ECV and Group_size is statistically significant under the null hypothesis, implying that there is a strong relationship between the two variables in the original data.
+
+***Step 8***
+
+```{r}
+
+library(infer)
+
+nboot <- 1000
+
+boot_r <- d |>
+  specify(ECV ~ Group_size) |>   
+  generate(reps = nboot, type = "bootstrap") |> 
+  calculate(stat = "slope")  
+
+# SE
+boot_se <- sd(boot_r$stat)
+
+# Quantiles
+ci_lower <- quantile(boot_r$stat, 0.025)
+ci_upper <- quantile(boot_r$stat, 0.975)
+
+# Theory-based CI
+ci_the_lower <- obs_slope - 1.96 * boot_se
+ci_the_upper <- obs_slope + 1.96 * boot_se
+
+# Combine the results into a data frame
+
+ci_results <- data.frame(
+  Method = c("Quantile Method", "Theory-Based Method"),
+  Lower_Bound = c(ci_lower, ci_the_lower),
+  Upper_Bound = c(ci_upper, ci_the_upper)
+)
+
+ci_results
+
+```
+
+***Do these CIs suggest that your slope coefficient is different from zero?***
+
+#Both methods provide similar confidence intervals, indicating that the slope coefficient is likely significantly different from zero, suggesting a strong relationship between ECV and Group_size.
